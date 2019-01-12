@@ -10,11 +10,21 @@
 #include <memory.h>
 #include <hashTableC.h>
 #include <unistd.h>
+#include <inttypes.h>
+
 
 #include "stRPHmm.h"
 #include "margin_phase_version.h"
 #include "sonLib.h"
 #include "externalTools/sonLib/C/impl/sonLibListPrivate.h"
+
+
+#include "CuTest.h"
+#include "sonLib.h"
+#include "stRPHmm.h"
+#define ALPHABET_CHARACTER_BITS 8
+//#include <math.h>
+//#include <time.h>
 
 /*
  * Functions used to print debug output.
@@ -268,6 +278,7 @@ stList *createHMMs(stList *profileSequences, stHash *referenceNamesToReferencePr
     // Create the initial list of HMMs
     st_logInfo("> Creating read partitioning HMMs\n");
     stList *hmms = getRPHmms(profileSequences, referenceNamesToReferencePriors, params);
+    //////////////////// Should I add the Kernel Here? ///////////////////////////////
     st_logInfo("\tGot %" PRIi64 " hmms before splitting\n", stList_length(hmms));
 
     // Break up the hmms where the phasing is uncertain
@@ -596,6 +607,52 @@ int main(int argc, char *argv[]) {
     // Get the final list of hmms
     stList *hmms = createHMMs(profileSequences, referenceNamesToReferencePriors, params);
 
+    //////////////////////////////New Code////////////////////////////////
+    // getExpectedInstanceNumber Kernel
+    // Creare a file for dumping data
+    FILE *fp;
+
+    fp = fopen("/tmp/test.txt", "w+");
+
+    stRPHmm *hmm = stList_get(hmms, 0);
+    stRPColumn *column = hmm->firstColumn;
+    while (column->nColumn != NULL){
+        uint64_t depth = column->depth;
+	uint64_t *bitCountVectors = calculateCountBitVectors(column->seqs, column->depth, column->activePositions, column->totalActivePositions);
+	// For all cells in the column
+	stRPCell *cell = column->head;
+	while(cell != NULL) {	
+		uint64_t partition = cell->partition;
+		for(uint64_t position=0; position<column->length; position++) { 
+			for (int64_t characterIndex = 0; characterIndex < 255; characterIndex++){
+				uint64_t *j = retrieveBitCountVector(bitCountVectors, position, characterIndex, 0);
+				uint64_t expectedCount = popcount64(j[0] & partition);
+
+				for(int64_t i=1; i<ALPHABET_CHARACTER_BITS; i++) {
+					expectedCount += (popcount64(j[i] & partition) << i);
+				}
+				assert(expectedCount >= 0.0);
+				assert((double)expectedCount / ALPHABET_MAX_PROB <= depth);
+				// Store expectedCount; in some Data structure
+				// (countvector, depth, partition, position, index) = expectedCount
+				// This is not the correct data structure. Add partition
+
+				//fprintf(fp, "%" PRIu64 "\n", bitCountVectors);
+				//fprintf(fp, "%" PRIu64 "\n", depth);
+				//fprintf(fp, "%" PRIu64 "\n", partition);
+				//fprintf(fp, "%" PRIu64 "\n", characterIndex);
+				//fprintf(fp, "%" PRIu64 "\n", expectedCount);
+				fprintf(fp, "%" PRIu64  ", %" PRIu64 ", %" PRIu64 ", %" PRIu64"\n",  depth, partition, characterIndex, expectedCount);
+				//fprintf(fp, "%" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64"\n", bitCountVectors, depth, partition, characterIndex, expectedCount);
+			}
+		}
+		cell = cell->nCell;
+	}
+	column = column->nColumn;
+    }
+    fp.close();
+   //////////////////////////////New Code////////////////////////////////
+
     // Prep for BAM outputs
     stReadHaplotypePartitionTable *readHaplotypePartitions = stReadHaplotypePartitionTable_construct(
             stList_length(profileSequences));
@@ -719,4 +776,3 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
-
